@@ -274,7 +274,7 @@ class GrantBuffer(implicit p: Parameters) extends L2Module {
 
   // =========== generating Hint to L1 ===========
   // TODO: the following keeps the exact same logic as before, but it needs serious optimization
-  val hintQueue = Module(new Queue(UInt(sourceIdBits.W), entries = mshrsAll))
+  val hintQueue = Module(new Queue(UInt(sourceIdBits.W), entries = mshrsAll, flow = true))
   // Total number of beats left to send in GrantBuf
   // [This is better]
   // val globalCounter = (grantQueue.io.count << 1.U).asUInt + grantBufValid.asUInt // entries * 2 + grantBufValid

@@ -369,7 +369,7 @@ class CoupledL2(implicit p: Parameters) extends LazyModule with HasCoupledL2Para
     }
     val l1Hint_arb = Module(new Arbiter(new L2ToL1Hint(), slices.size))
     val slices_l1Hint = slices.zipWithIndex.map {
-      case (s, i) => Pipeline(s.io.l1Hint, depth = 1, pipe = false, name = Some(s"l1Hint_buffer_$i"))
+      case (s, i) => s.io.l1Hint //Pipeline(s.io.l1Hint, depth = 1, pipe = false, name = Some(s"l1Hint_buffer_$i"))
     }
     val (client_sourceId_match_oh, client_sourceId_start) = node.in.head._2.client.clients
                                                           .map(c => {
