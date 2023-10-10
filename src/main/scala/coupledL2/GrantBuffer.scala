@@ -209,6 +209,7 @@ class GrantBuffer(implicit p: Parameters) extends L2Module {
     resp.valid := pftRespQueue.get.io.deq.valid
     resp.bits.tag := pftRespQueue.get.io.deq.bits.tag
     resp.bits.set := pftRespQueue.get.io.deq.bits.set
+    resp.bits.vaddr.foreach(_ := pftRespQueue.get.io.deq.bits.vaddr.getOrElse(0.U))
     pftRespQueue.get.io.deq.ready := resp.ready
 
     assert(pftRespQueue.get.io.enq.ready, "pftRespQueue should never be full, no back pressure logic")
