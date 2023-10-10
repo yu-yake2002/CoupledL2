@@ -177,7 +177,7 @@ class GrantBuffer(implicit p: Parameters) extends L2Module {
   when(deqValid && io.d.ready && !grantBufValid && deqTask.opcode(0)) {
     grantBufValid := true.B
     grantBuf.task := deqTask
-    grantBuf.data := deqData(1)
+    grantBuf.data := deqData(1) // TODO: this only applies to beatSize = 2
     grantBuf.grantid := deqId
   }
   when(grantBufValid && io.d.ready) {
