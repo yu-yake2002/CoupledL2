@@ -195,6 +195,7 @@ class GrantBuffer(implicit p: Parameters) extends L2Module {
   val pftRespEntry = new Bundle() {
     val tag = UInt(tagBits.W)
     val set = UInt(setBits.W)
+    val vaddr = vaddrBitsOpt.map(_ => UInt(vaddrBitsOpt.get.W))
   }
   // TODO: this may not need 10 entries, but this does not take much space
   val pftQueueLen = 10
@@ -204,6 +205,7 @@ class GrantBuffer(implicit p: Parameters) extends L2Module {
       io.d_task.bits.task.fromL2pft.getOrElse(false.B)
     pftRespQueue.get.io.enq.bits.tag := io.d_task.bits.task.tag
     pftRespQueue.get.io.enq.bits.set := io.d_task.bits.task.set
+    pftRespQueue.get.io.enq.bits.vaddr.foreach(_ := io.d_task.bits.task.vaddr.getOrElse(0.U))
 
     val resp = io.prefetchResp.get
     resp.valid := pftRespQueue.get.io.deq.valid
