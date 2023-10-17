@@ -149,7 +149,7 @@ class RequestBuffer(flow: Boolean = true, entries: Int = 4)(implicit p: Paramete
   //!! TODO: we can also remove those that duplicate with mainPipe
 
   /* ======== Alloc ======== */
-  io.in.ready   := !full || doFlow || mergeA
+  io.in.ready   := !full || doFlow
 
   val insertIdx = PriorityEncoder(buffer.map(!_.valid))
   val alloc = !full && io.in.valid && !doFlow && !dup && !mergeA
