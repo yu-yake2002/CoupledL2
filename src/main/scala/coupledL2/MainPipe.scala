@@ -33,8 +33,6 @@ class MainPipe(implicit p: Parameters) extends L2Module {
   val io = IO(new Bundle() {
     /* receive task from arbiter at stage 2 */
     val taskFromArb_s2 = Flipped(ValidIO(new TaskBundle()))
-    /* status from arbiter at stage1  */
-    val taskInfo_s1 = Flipped(ValidIO(new TaskBundle()))
 
     /* handle set conflict in req arb */
     val fromReqArb = Input(new Bundle() {
@@ -96,9 +94,11 @@ class MainPipe(implicit p: Parameters) extends L2Module {
     val nestedwb = Output(new NestedWriteback)
     val nestedwbData = Output(new DSBlock)
 
-    val l1Hint = ValidIO(new L2ToL1Hint())
-    val grantBufferHint = Flipped(ValidIO(new L2ToL1Hint()))
-    val globalCounter = Input(UInt((log2Ceil(mshrsAll) + 1).W))
+    /* send Hint to L1 */
+    val l1Hint = DecoupledIO(new L2ToL1Hint())
+    /* receive s1 info for Hint */
+    val taskInfo_s1 = Flipped(ValidIO(new TaskBundle()))
+
     /* send prefetchTrain to Prefetch to trigger a prefetch req */
     val prefetchTrain = prefetchOpt.map(_ => DecoupledIO(new PrefetchTrain))
 
@@ -472,6 +472,11 @@ class MainPipe(implicit p: Parameters) extends L2Module {
   val need_write_releaseBuf_s5 = RegInit(false.B)
   val need_write_refillBuf_s5 = RegInit(false.B)
   val isC_s5, isD_s5 = RegInit(false.B)
+  // those hit@s3 and ready to fire@s5, and Now wait@s4
+  val pendingC_s4 = task_s4.bits.fromB && !task_s4.bits.mshrTask && task_s4.bits.opcode === ProbeAckData
+  val pendingD_s4 = task_s4.bits.fromA && !task_s4.bits.mshrTask &&
+    (task_s4.bits.opcode === GrantData || task_s4.bits.opcode === AccessAckData)
+
   task_s5.valid := task_s4.valid && !req_drop_s4
   when (task_s4.valid && !req_drop_s4) {
     task_s5.bits := task_s4.bits
@@ -480,9 +485,8 @@ class MainPipe(implicit p: Parameters) extends L2Module {
     need_write_releaseBuf_s5 := need_write_releaseBuf_s4
     need_write_refillBuf_s5 := need_write_refillBuf_s4
     // except for those ready at s3/s4 (isC/D_s4), sink resps are also ready to fire at s5
-    isC_s5 := isC_s4 || task_s4.bits.fromB && !task_s4.bits.mshrTask && task_s4.bits.opcode === ProbeAckData
-    isD_s5 := isD_s4 || task_s4.bits.fromA && !task_s4.bits.mshrTask &&
-      (task_s4.bits.opcode === GrantData || task_s4.bits.opcode === AccessAckData)
+    isC_s5 := isC_s4 || pendingC_s4
+    isD_s5 := isD_s4 || pendingD_s4
   }
   val rdata_s5 = io.toDS.rdata_s5.data
   val out_data_s5 = Mux(!task_s5.bits.mshrTask, rdata_s5, data_s5)
@@ -491,22 +495,11 @@ class MainPipe(implicit p: Parameters) extends L2Module {
   val customL1Hint = Module(new CustomL1Hint)
 
   customL1Hint.io.s1 := io.taskInfo_s1
-  customL1Hint.io.s2 := task_s2
-
+  
   customL1Hint.io.s3.task      := task_s3
-  customL1Hint.io.s3.d         := d_s3.valid
+  // overwrite opcode: if sinkReq can respond, use sink_resp_s3.bits.opcode = Grant/GrantData
+  customL1Hint.io.s3.task.bits.opcode := Mux(sink_resp_s3.valid, sink_resp_s3.bits.opcode, task_s3.bits.opcode)
   customL1Hint.io.s3.need_mshr := need_mshr_s3
-
-  customL1Hint.io.s4.task                  := task_s4
-  customL1Hint.io.s4.d                     := d_s4.valid
-  customL1Hint.io.s4.need_write_releaseBuf := need_write_releaseBuf_s4
-  customL1Hint.io.s4.need_write_refillBuf  := need_write_refillBuf_s4
-
-  customL1Hint.io.s5.task      := task_s5
-  customL1Hint.io.s5.d         := d_s5.valid
-
-  customL1Hint.io.globalCounter   := io.globalCounter
-  customL1Hint.io.grantBufferHint <> io.grantBufferHint
 
   customL1Hint.io.l1Hint <> io.l1Hint
 
@@ -571,12 +564,14 @@ class MainPipe(implicit p: Parameters) extends L2Module {
     mshr_req_s3,
     mshr_refill_s3 && !retry,
     true.B
-    // TODO: To consider grantBuffer capacity conflict,
-    // only " req_s3.fromC || req_s3.fromA && !need_mshr_s3 " is needed
+    // TODO:
+    // To consider grantBuffer capacity conflict, only " req_s3.fromC || req_s3.fromA && !need_mshr_s3 " is needed
     // But to consider mshrFull, all channel_reqs are needed
+    // so maybe it is excessive for grantBuf capacity conflict
   )
+
   io.status_vec(0).bits.channel := task_s3.bits.channel
-  io.status_vec(1).valid        := task_s4.valid && isD_s4 && !need_write_releaseBuf_s4 && !need_write_refillBuf_s4
+  io.status_vec(1).valid        := task_s4.valid && (isD_s4 || pendingD_s4)
   io.status_vec(1).bits.channel := task_s4.bits.channel
   io.status_vec(2).valid        := d_s5.valid
   io.status_vec(2).bits.channel := task_s5.bits.channel
@@ -619,7 +614,6 @@ class MainPipe(implicit p: Parameters) extends L2Module {
 
   val c = Seq(c_s5, c_s4, c_s3)
   val d = Seq(d_s5, d_s4, d_s3)
-  // DO NOT use TLArbiter because TLArbiter will send continuous beats for the same source
   val c_arb = Module(new Arbiter(io.toSourceC.bits.cloneType, c.size))
   val d_arb = Module(new Arbiter(io.toSourceD.bits.cloneType, d.size))
   c_arb.io.in <> c
