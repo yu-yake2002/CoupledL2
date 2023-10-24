@@ -91,7 +91,7 @@ class CustomL1Hint(implicit p: Parameters) extends L2Module {
   // ==================== Hint Queue ====================
   val hintEntries = mshrsAll
   val hintEntriesWidth = log2Ceil(hintEntries)
-  val hintQueue = Module(new Queue(new HintQueueEntry, hintEntries))
+  val hintQueue = Module(new Queue(new HintQueueEntry, hintEntries, flow = true))
 
   // this will have at most 2 entries
   val hint_s1Queue = Module(new Queue(new HintQueueEntry, 4, flow = true))
