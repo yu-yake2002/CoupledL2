@@ -66,8 +66,8 @@ class RequestBuffer(flow: Boolean = true, entries: Int = 4)(implicit p: Paramete
       val set = UInt(setBits.W)
     }))
 
-    // to TopDownMonitor
     val hasLatePF = Output(Bool())
+    val hasMergeA = Output(Bool())
   })
 
   /* ======== Data Structure ======== */
@@ -115,24 +115,21 @@ class RequestBuffer(flow: Boolean = true, entries: Int = 4)(implicit p: Paramete
   val full    = Cat(buffer.map(_.valid)).andR
 
   // incoming Acquire can be merged with late_pf MSHR block
-  val inLatch = RegNext(io.in.bits) // for timing considerations
-  val inLatchValid = RegNext(io.in.valid)
   val mergeAMask = VecInit(io.mshrInfo.map(s =>
-    s.valid && s.bits.isPrefetch && sameAddr(inLatch, s.bits) && !s.bits.willFree && !s.bits.dirHit && !s.bits.s_refill &&
-      inLatch.fromA && (inLatch.opcode === AcquireBlock || inLatch.opcode === AcquirePerm) && !s.bits.mergeA &&
-      !(inLatch.param === NtoT && s.bits.param === NtoB)
+    s.valid && s.bits.isPrefetch && sameAddr(in, s.bits) && !s.bits.willFree && !s.bits.dirHit && !s.bits.s_refill &&
+      in.fromA && (in.opcode === AcquireBlock || in.opcode === AcquirePerm) && !s.bits.mergeA && !(in.param === NtoT && s.bits.param === NtoB)
   )).asUInt
   val mergeA = mergeAMask.orR
   val mergeAId = OHToUInt(mergeAMask)
-  io.aMergeTask.valid := inLatchValid && mergeA
+  io.aMergeTask.valid := io.in.valid && mergeA
   io.aMergeTask.bits.id := mergeAId
-  io.aMergeTask.bits.task := inLatch
-  // to Monitor
-  io.hasLatePF := latePrefetch(in) && io.in.valid && !sameAddr(in, RegNext(in))
+  io.aMergeTask.bits.task := in
 
   // flow not allowed when full, or entries might starve
   val canFlow = flow.B && !full && !conflict(in) && !chosenQValid && !Cat(io.mainPipeBlock).orR
   val doFlow  = canFlow && io.out.ready
+  io.hasLatePF := latePrefetch(in) && io.in.valid && !sameAddr(in, RegNext(in))
+  io.hasMergeA := mergeA && io.in.valid && !sameAddr(in, RegNext(in))
 
   //  val depMask    = buffer.map(e => e.valid && sameAddr(io.in.bits, e.task))
   // remove duplicate prefetch if same-addr A req in MSHR or ReqBuf
@@ -149,7 +146,7 @@ class RequestBuffer(flow: Boolean = true, entries: Int = 4)(implicit p: Paramete
   //!! TODO: we can also remove those that duplicate with mainPipe
 
   /* ======== Alloc ======== */
-  io.in.ready   := !full || doFlow
+  io.in.ready   := !full || doFlow || mergeA
 
   val insertIdx = PriorityEncoder(buffer.map(!_.valid))
   val alloc = !full && io.in.valid && !doFlow && !dup && !mergeA
@@ -264,7 +261,7 @@ class RequestBuffer(flow: Boolean = true, entries: Int = 4)(implicit p: Paramete
     XSPerfAccumulate(cacheParams, "recv_prefetch", io.in.fire && isPrefetch)
     XSPerfAccumulate(cacheParams, "recv_normal", io.in.fire && !isPrefetch)
     XSPerfAccumulate(cacheParams, "chosenQ_cancel", chosenQValid && cancel)
-    XSPerfAccumulate(cacheParams, "req_buffer_mergeA", io.aMergeTask.valid)
+    XSPerfAccumulate(cacheParams, "req_buffer_mergeA", io.hasMergeA)
     // TODO: count conflict
     for(i <- 0 until entries){
       val cntEnable = PopCount(buffer.map(_.valid)) === i.U
