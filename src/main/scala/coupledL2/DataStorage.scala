@@ -72,7 +72,7 @@ class DataStorage(implicit p: Parameters) extends L2Module {
     array(i).io.r.apply(ren, arrayIdx)
   }
 
-  io.rdata := Cat(array.map(_.io.r.resp.data(0)).reverse).asTypeOf(new DSBlock)
+  io.rdata := RegNext(Cat(array.map(_.io.r.resp.data(0)).reverse).asTypeOf(new DSBlock))
   // TODO: timing: we should not use reg here, instead set this as multicycle path
   // s3 read, s4 pass and s5 to destination
 }
