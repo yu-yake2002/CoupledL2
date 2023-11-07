@@ -40,12 +40,10 @@ class MainPipe(implicit p: Parameters) extends L2Module {
     val fromReqArb = Input(new Bundle() {
       val status_s1 = new PipeEntranceStatus
     })
-    /* block A, B and C at Entrance */
+    /* block B and C at Entrance */
     val toReqArb = Output(new BlockInfo())
 
-    /* mainpipe set-conflict info to be kept in reqBuf entry */
-    val ATag = Input(UInt(tagBits.W)) // !TODO: dirty, consider optimize structure
-    val ASet = Input(UInt(setBits.W))
+    /* block A at Entrance */
     val toReqBuf = Output(Vec(2, Bool()))
 
     /* handle capacity conflict of GrantBuffer */
@@ -557,11 +555,9 @@ class MainPipe(implicit p: Parameters) extends L2Module {
     s.set === s1.b_set && (if(tag) s.tag === s1.b_tag else true.B)
   }
 
-  // mainpipe set-conflict info, kept in reqBuf entry
-  io.toReqBuf(0) := task_s2.valid && task_s2.bits.set === io.ASet
-  io.toReqBuf(1) := task_s3.valid && task_s3.bits.set === io.ASet
+  io.toReqBuf(0) := task_s2.valid && s23Block('a', task_s2.bits)
+  io.toReqBuf(1) := task_s3.valid && s23Block('a', task_s3.bits)
 
-  // block A/B/C/G according to s1 info
   io.toReqArb.blockC_s1 := task_s2.valid && s23Block('c', task_s2.bits)
 
   io.toReqArb.blockB_s1 :=
@@ -570,9 +566,8 @@ class MainPipe(implicit p: Parameters) extends L2Module {
     task_s4.valid && bBlock(task_s4.bits, tag = true) ||
     task_s5.valid && bBlock(task_s5.bits, tag = true)
 
-  io.toReqArb.blockA_s1 :=
-    task_s2.valid && s23Block('a', task_s2.bits) ||
-    task_s3.valid && s23Block('a', task_s3.bits)
+  io.toReqArb.blockA_s1 := io.toReqBuf(0) || io.toReqBuf(1)
+  // TODO: may consider remove this for timing? if blocking is done appropriately in RequestBuffer
 
   io.toReqArb.blockG_s1 := task_s2.valid && s23Block('g', task_s2.bits)
   /* ======== Pipeline Status ======== */
