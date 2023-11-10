@@ -63,7 +63,6 @@ class MainPipe(implicit p: Parameters) extends L2Module {
     }
 
     /* read C-channel Release Data and write into DS */
-    val bufRead = Output(ValidIO(new PipeBufferRead))
     val bufResp = Input(new PipeBufferResp)
 
     /* get ReleaseBuffer and RefillBuffer read result */
@@ -122,9 +121,6 @@ class MainPipe(implicit p: Parameters) extends L2Module {
   // send out MSHR task if data is not needed
   val task_s2 = io.taskFromArb_s2
   val hasData_s2 = task_s2.bits.opcode(0)
-
-  io.bufRead.valid := task_s2.valid && task_s2.bits.fromC && task_s2.bits.opcode(0)
-  io.bufRead.bits.bufIdx := task_s2.bits.bufIdx
 
   /* ======== Stage 3 ======== */
   val task_s3 = RegInit(0.U.asTypeOf(Valid(new TaskBundle())))
