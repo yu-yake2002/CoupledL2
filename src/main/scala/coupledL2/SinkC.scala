@@ -180,7 +180,7 @@ class SinkC(implicit p: Parameters) extends L2Module {
 
   io.c.ready := !isRelease || !first || !full
 
-  io.bufResp.data := dataBuf(io.bufRead.bits.bufIdx)
+  io.bufResp.data := RegEnable(dataBuf(io.bufRead.bits.bufIdx), io.bufRead.valid)
 
   // Performance counters
   val stall = io.c.valid && isRelease && !io.c.ready
