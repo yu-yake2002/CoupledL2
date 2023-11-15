@@ -119,6 +119,7 @@ class MainPipe(implicit p: Parameters) extends L2Module {
   val d_s3, d_s4, d_s5 = Wire(io.toSourceD.cloneType)
 
   /* ======== Stage 2 ======== */
+  // send out MSHR task if data is not needed
   val task_s2 = io.taskFromArb_s2
   val hasData_s2 = task_s2.bits.opcode(0)
 
@@ -266,7 +267,7 @@ class MainPipe(implicit p: Parameters) extends L2Module {
 
   /* ======== Interact with DS ======== */
   val data_s3 = Mux(io.releaseBufResp_s3.valid, io.releaseBufResp_s3.bits.data, io.refillBufResp_s3.bits.data) // releaseBuf prior
-  val c_releaseData_s3 = io.bufResp.data.asUInt
+  val c_releaseData_s3 = RegNext(io.bufResp.data.asUInt)
   val hasData_s3 = source_req_s3.opcode(0)
 
   val need_data_a  = dirResult_s3.hit && (req_get_s3 || req_acquireBlock_s3)
