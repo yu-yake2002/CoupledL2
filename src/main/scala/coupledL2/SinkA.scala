@@ -28,12 +28,14 @@ import coupledL2.utils.XSPerfAccumulate
 import huancun.{AliasKey, PrefetchKey}
 import utility.MemReqSource
 
+class SinkAIO(implicit p: Parameters) extends L2Bundle {
+  val a = Flipped(DecoupledIO(new TLBundleA(edgeIn.bundle)))
+  val prefetchReq = prefetchOpt.map(_ => Flipped(DecoupledIO(new PrefetchReq)))
+  val task = DecoupledIO(new TaskBundle)
+}
+
 class SinkA(implicit p: Parameters) extends L2Module {
-  val io = IO(new Bundle() {
-    val a = Flipped(DecoupledIO(new TLBundleA(edgeIn.bundle)))
-    val prefetchReq = prefetchOpt.map(_ => Flipped(DecoupledIO(new PrefetchReq)))
-    val task = DecoupledIO(new TaskBundle)
-  })
+  lazy val io = IO(new SinkAIO)
   assert(!(io.a.valid && io.a.bits.opcode(2, 1) === 0.U), "no Put")
 
   def fromTLAtoTaskBundle(a: TLBundleA): TaskBundle = {
@@ -68,6 +70,7 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.vaddr.foreach(_ := a.user.lift(VaddrKey).getOrElse(0.U))
     task.mergeA := false.B
     task.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
+    task.denied.foreach(_ := false.B)
     task
   }
   def fromPrefetchReqtoTaskBundle(req: PrefetchReq): TaskBundle = {
@@ -103,6 +106,7 @@ class SinkA(implicit p: Parameters) extends L2Module {
     task.vaddr.foreach(_ := 0.U)
     task.mergeA := false.B
     task.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
+    task.denied.foreach(_ := false.B)
     task
   }
   if (prefetchOpt.nonEmpty) {

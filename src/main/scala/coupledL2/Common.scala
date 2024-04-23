@@ -101,6 +101,28 @@ class TaskBundle(implicit p: Parameters) extends L2Bundle with HasChannelBits {
   // for merged MSHR tasks(Acquire & late Prefetch)
   val mergeA = Bool()
   val aMergeTask = new MergeTaskBundle()
+
+  val denied: Option[Bool] = if (enableUnifiedCache) Some(Bool()) else None
+
+  def blockType: Option[UInt] = {
+    if (enableUnifiedCache) {
+      val masters = p(EdgeInKey).client.masters.filter(_.name == "FTB")
+      assert(masters.length == 1)
+      val masterSourceId = masters.head.sourceId
+      val isFtb: Bool = VecInit((masterSourceId.start to masterSourceId.end).map(_.U === sourceId)).reduce(_ || _)
+      Some(Mux(isFtb, MetaEntry().FtbBlockType, MetaEntry().CacheBlockType))
+    } else {
+      None
+    }
+  }
+
+  def isFtbBlock: Option[Bool] = {
+    if (enableUnifiedCache) {
+      Some(blockType.get === MetaEntry().FtbBlockType)
+    } else {
+      None
+    }
+  }
 }
 
 class PipeStatus(implicit p: Parameters) extends L2Bundle with HasChannelBits

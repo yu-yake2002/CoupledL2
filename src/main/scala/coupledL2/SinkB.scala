@@ -26,12 +26,14 @@ import freechips.rocketchip.tilelink.TLPermissions._
 import coupledL2.utils.XSPerfAccumulate
 import utility.MemReqSource
 
+class SinkBIO(implicit p: Parameters) extends L2Bundle {
+  val b = Flipped(DecoupledIO(new TLBundleB(edgeIn.bundle)))
+  val task = DecoupledIO(new TaskBundle)
+  val msInfo = Vec(mshrsAll, Flipped(ValidIO(new MSHRInfo)))
+}
+
 class SinkB(implicit p: Parameters) extends L2Module {
-  val io = IO(new Bundle() {
-    val b = Flipped(DecoupledIO(new TLBundleB(edgeIn.bundle)))
-    val task = DecoupledIO(new TaskBundle)
-    val msInfo = Vec(mshrsAll, Flipped(ValidIO(new MSHRInfo)))
-  })
+  lazy val io = IO(new SinkBIO)
 
   def fromTLBtoTaskBundle(b: TLBundleB): TaskBundle = {
     val task = Wire(new TaskBundle)
@@ -65,6 +67,7 @@ class SinkB(implicit p: Parameters) extends L2Module {
     task.replTask := false.B
     task.mergeA := false.B
     task.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
+    task.denied.foreach(_ := false.B)
     task
   }
   val task = fromTLBtoTaskBundle(io.b.bits)

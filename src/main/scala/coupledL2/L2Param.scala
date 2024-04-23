@@ -95,7 +95,9 @@ case class L2Param
   // TopDown
   elaboratedTopDown: Boolean = true,
   // env
-  FPGAPlatform: Boolean = false
+  FPGAPlatform: Boolean = false,
+  // Unified Cache
+  enableUnifiedFtb: Boolean = false
 ) {
   def toCacheParams: CacheParameters = CacheParameters(
     name = name,

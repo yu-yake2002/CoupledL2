@@ -25,48 +25,50 @@ import freechips.rocketchip.tilelink.TLMessages._
 import org.chipsalliance.cde.config.Parameters
 import coupledL2.utils.XSPerfAccumulate
 
-class RequestArb(implicit p: Parameters) extends L2Module {
-  val io = IO(new Bundle() {
-    /* receive incoming tasks */
-    val sinkA    = Flipped(DecoupledIO(new TaskBundle))
-    val ATag     = Input(UInt(tagBits.W)) // !TODO: very dirty, consider optimize structure
-    val ASet     = Input(UInt(setBits.W)) // To pass A entrance status to MP for blockA-info of ReqBuf
-    val s1Entrance = ValidIO(new L2Bundle {
-      val set = UInt(setBits.W)
-    })
-
-    val sinkB    = Flipped(DecoupledIO(new TaskBundle))
-    val sinkC    = Flipped(DecoupledIO(new TaskBundle))
-    val mshrTask = Flipped(DecoupledIO(new TaskBundle))
-
-    /* read/write directory */
-    val dirRead_s1 = DecoupledIO(new DirRead())  // To directory, read meta/tag
-
-    /* send task to mainpipe */
-    val taskToPipe_s2 = ValidIO(new TaskBundle())
-    /* send s1 task info to mainpipe to help hint */
-    val taskInfo_s1 = ValidIO(new TaskBundle())
-
-    /* send mshrBuf read request */
-    val refillBufRead_s2 = ValidIO(new MSHRBufRead)
-    val releaseBufRead_s2 = ValidIO(new MSHRBufRead)
-
-    /* status of each pipeline stage */
-    val status_s1 = Output(new PipeEntranceStatus) // set & tag of entrance status
-    val status_vec = Vec(2, ValidIO(new PipeStatus)) // whether this stage will flow into SourceD
-
-    /* handle set conflict, capacity conflict */
-    val fromMSHRCtl = Input(new BlockInfo())
-    val fromMainPipe = Input(new BlockInfo())
-    val fromGrantBuffer = Input(new Bundle() {
-      val blockSinkReqEntrance = new BlockInfo()
-      val blockMSHRReqEntrance = Bool()
-    })
-    val fromSourceC = Input(new Bundle() {
-      val blockSinkBReqEntrance = Bool()
-      val blockMSHRReqEntrance = Bool()
-    })
+class RequestArbIO(implicit p: Parameters) extends L2Bundle {
+  /* receive incoming tasks */
+  val sinkA = Flipped(DecoupledIO(new TaskBundle))
+  val ATag = Input(UInt(tagBits.W)) // !TODO: very dirty, consider optimize structure
+  val ASet = Input(UInt(setBits.W)) // To pass A entrance status to MP for blockA-info of ReqBuf
+  val s1Entrance = ValidIO(new L2Bundle {
+    val set = UInt(setBits.W)
   })
+
+  val sinkB = Flipped(DecoupledIO(new TaskBundle))
+  val sinkC = Flipped(DecoupledIO(new TaskBundle))
+  val mshrTask = Flipped(DecoupledIO(new TaskBundle))
+
+  /* read/write directory */
+  val dirRead_s1 = DecoupledIO(new DirRead()) // To directory, read meta/tag
+
+  /* send task to mainpipe */
+  val taskToPipe_s2 = ValidIO(new TaskBundle())
+  /* send s1 task info to mainpipe to help hint */
+  val taskInfo_s1 = ValidIO(new TaskBundle())
+
+  /* send mshrBuf read request */
+  val refillBufRead_s2 = ValidIO(new MSHRBufRead)
+  val releaseBufRead_s2 = ValidIO(new MSHRBufRead)
+
+  /* status of each pipeline stage */
+  val status_s1 = Output(new PipeEntranceStatus) // set & tag of entrance status
+  val status_vec = Vec(2, ValidIO(new PipeStatus)) // whether this stage will flow into SourceD
+
+  /* handle set conflict, capacity conflict */
+  val fromMSHRCtl = Input(new BlockInfo())
+  val fromMainPipe = Input(new BlockInfo())
+  val fromGrantBuffer = Input(new Bundle() {
+    val blockSinkReqEntrance = new BlockInfo()
+    val blockMSHRReqEntrance = Bool()
+  })
+  val fromSourceC = Input(new Bundle() {
+    val blockSinkBReqEntrance = Bool()
+    val blockMSHRReqEntrance = Bool()
+  })
+}
+
+class RequestArb(implicit p: Parameters) extends L2Module {
+  lazy val io = IO(new RequestArbIO)
 
   /* ======== Reset ======== */
   val resetFinish = RegInit(false.B)
@@ -82,11 +84,11 @@ class RequestArb(implicit p: Parameters) extends L2Module {
   val mshr_task_s0 = Wire(Valid(new TaskBundle()))
   val mshr_task_s1 = RegInit(0.U.asTypeOf(Valid(new TaskBundle())))
 
-  val s1_needs_replRead = mshr_task_s1.valid && mshr_task_s1.bits.fromA && mshr_task_s1.bits.replTask && (
+  val s1_needs_replRead = mshr_task_s1.valid && (mshr_task_s1.bits.fromA && mshr_task_s1.bits.replTask && (
     mshr_task_s1.bits.opcode(2, 1) === Grant(2, 1) ||
     mshr_task_s1.bits.opcode === AccessAckData ||
     mshr_task_s1.bits.opcode === HintAck && mshr_task_s1.bits.dsWen
-  )
+  ) || (mshr_task_s1.bits.fromC && mshr_task_s1.bits.opcode === ReleaseAck))
 
   /* ======== Stage 0 ======== */
   // if mshr_task_s1 is replRead, it might stall and wait for dirRead.ready, so we block new mshrTask from entering
@@ -146,6 +148,7 @@ class RequestArb(implicit p: Parameters) extends L2Module {
   io.dirRead_s1.bits.replacerInfo.reqSource := task_s1.bits.reqSource
   io.dirRead_s1.bits.refill := s1_needs_replRead
   io.dirRead_s1.bits.mshrId := task_s1.bits.mshrId
+  io.dirRead_s1.bits.blockType.foreach(_ := task_s1.bits.blockType.get)
 
   // block same-set A req
   io.s1Entrance.valid := mshr_task_s1.valid && mshr_task_s1.bits.metaWen || io.sinkC.fire || io.sinkB.fire
@@ -170,10 +173,19 @@ class RequestArb(implicit p: Parameters) extends L2Module {
   // For GrantData, read refillBuffer
   // Caution: GrantData-alias may read DataStorage or ReleaseBuf instead
   // Release-replTask also read refillBuf and then write to DS
-  io.refillBufRead_s2.valid := mshrTask_s2 && (
-    task_s2.bits.fromB && task_s2.bits.opcode(2, 1) === ProbeAck(2, 1) && task_s2.bits.replTask ||
-    task_s2.bits.opcode(2, 1) === Release(2, 1) && task_s2.bits.replTask ||
-    mshrTask_s2_a_upwards && !task_s2.bits.useProbeData)
+  if (enableUnifiedCache) {
+    io.refillBufRead_s2.valid := mshrTask_s2 && (
+      task_s2.bits.fromB && task_s2.bits.opcode(2, 1) === ProbeAck(2, 1) && task_s2.bits.replTask ||
+        task_s2.bits.opcode(2, 1) === Release(2, 1) && task_s2.bits.replTask ||
+        mshrTask_s2_a_upwards && !task_s2.bits.useProbeData ||
+        task_s2.bits.fromC && task_s2.bits.isFtbBlock.get
+    )
+  } else {
+    io.refillBufRead_s2.valid := mshrTask_s2 && (
+      task_s2.bits.fromB && task_s2.bits.opcode(2, 1) === ProbeAck(2, 1) && task_s2.bits.replTask ||
+        task_s2.bits.opcode(2, 1) === Release(2, 1) && task_s2.bits.replTask ||
+        mshrTask_s2_a_upwards && !task_s2.bits.useProbeData)
+  }
   io.refillBufRead_s2.bits.id := task_s2.bits.mshrId
 
   // ReleaseData and ProbeAckData read releaseBuffer

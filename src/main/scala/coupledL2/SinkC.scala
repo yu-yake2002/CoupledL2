@@ -29,20 +29,22 @@ class PipeBufferResp(implicit p: Parameters) extends L2Bundle {
   val data = Vec(beatSize, UInt((beatBytes * 8).W))
 }
 
+class SinkCIO(implicit p: Parameters) extends L2Bundle {
+  val c = Flipped(DecoupledIO(new TLBundleC(edgeIn.bundle)))
+  val task = DecoupledIO(new TaskBundle) // Release/ReleaseData
+  val resp = Output(new RespBundle)
+  val releaseBufWrite = ValidIO(new MSHRBufWrite)
+  val bufResp = Output(new PipeBufferResp)
+  val refillBufWrite = ValidIO(new MSHRBufWrite)
+  val msInfo = Vec(mshrsAll, Flipped(ValidIO(new MSHRInfo)))
+}
+
 // SinkC receives upwards Release or ProbeAck:
 // (1) For Release/ReleaseData, send it to RequestArb directly
 // (2) For ProbeAck/ProbeAckData, wakeup w_probeack in MSHR
 //     For ProbeAckData, save data into ReleaseBuffer
 class SinkC(implicit p: Parameters) extends L2Module {
-  val io = IO(new Bundle() {
-    val c = Flipped(DecoupledIO(new TLBundleC(edgeIn.bundle)))
-    val task = DecoupledIO(new TaskBundle) // Release/ReleaseData
-    val resp = Output(new RespBundle)
-    val releaseBufWrite = ValidIO(new MSHRBufWrite)
-    val bufResp = Output(new PipeBufferResp)
-    val refillBufWrite = ValidIO(new MSHRBufWrite)
-    val msInfo = Vec(mshrsAll, Flipped(ValidIO(new MSHRInfo)))
-  })
+  lazy val io = IO(new SinkCIO)
 
   val (first, last, _, beat) = edgeIn.count(io.c)
   val isRelease = io.c.bits.opcode(1)
@@ -97,6 +99,7 @@ class SinkC(implicit p: Parameters) extends L2Module {
     task.replTask := false.B
     task.mergeA := false.B
     task.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
+    task.denied.foreach(_ := false.B)
     task
   }
 

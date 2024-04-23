@@ -66,9 +66,16 @@ class Monitor(implicit p: Parameters) extends L2Module {
     meta_s3.state === TRUNK && !meta_s3.clients.orR)),
     "Trunk should have some client hit")
 
-  assert(RegNext(!(s3_valid && req_s3.fromC && dirResult_s3.hit &&
-    !meta_s3.clients.orR)),
-    "Invalid Client should not send Release")
+  // TODO: Following assertion could be triggered in Unified Cache
+  if (enableUnifiedCache) {
+    assert(RegNext(!(s3_valid && req_s3.fromC && dirResult_s3.hit &&
+      !meta_s3.clients.orR && meta_s3.blockType.get === MetaEntry().CacheBlockType)),
+      "Invalid Client should not send Release")
+  } else {
+    assert(RegNext(!(s3_valid && req_s3.fromC && dirResult_s3.hit &&
+      !meta_s3.clients.orR)),
+      "Invalid Client should not send Release")
+  }
 
   // assertion for set blocking
   // A channel task @s1 never have same-set task @s2/s3

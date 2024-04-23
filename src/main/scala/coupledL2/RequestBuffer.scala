@@ -49,26 +49,27 @@ class AMergeTask(implicit p: Parameters) extends L2Bundle {
   val task = new TaskBundle()
 }
 
+class RequestBufferIO(implicit p: Parameters) extends L2Bundle {
+  val in          = Flipped(DecoupledIO(new TaskBundle))
+  val out         = DecoupledIO(new TaskBundle)
+  val mshrInfo  = Vec(mshrsAll, Flipped(ValidIO(new MSHRInfo)))
+  val aMergeTask = ValidIO(new AMergeTask)
+  val mainPipeBlock = Input(Vec(2, Bool()))
+
+  val ATag        = Output(UInt(tagBits.W))
+  val ASet        = Output(UInt(setBits.W))
+
+  // when Probe/Release/MSHR enters MainPipe, we need also to block A req
+  val s1Entrance = Flipped(ValidIO(new L2Bundle {
+    val set = UInt(setBits.W)
+  }))
+
+  val hasLatePF = Output(Bool())
+  val hasMergeA = Output(Bool())
+}
+
 class RequestBuffer(flow: Boolean = true, entries: Int = 4)(implicit p: Parameters) extends L2Module {
-
-  val io = IO(new Bundle() {
-    val in          = Flipped(DecoupledIO(new TaskBundle))
-    val out         = DecoupledIO(new TaskBundle)
-    val mshrInfo  = Vec(mshrsAll, Flipped(ValidIO(new MSHRInfo)))
-    val aMergeTask = ValidIO(new AMergeTask)
-    val mainPipeBlock = Input(Vec(2, Bool()))
-
-    val ATag        = Output(UInt(tagBits.W))
-    val ASet        = Output(UInt(setBits.W))
-
-    // when Probe/Release/MSHR enters MainPipe, we need also to block A req
-    val s1Entrance = Flipped(ValidIO(new L2Bundle {
-      val set = UInt(setBits.W)
-    }))
-
-    val hasLatePF = Output(Bool())
-    val hasMergeA = Output(Bool())
-  })
+  lazy val io = IO(new RequestBufferIO)
 
   /* ======== Data Structure ======== */
 
@@ -117,7 +118,8 @@ class RequestBuffer(flow: Boolean = true, entries: Int = 4)(implicit p: Paramete
   // incoming Acquire can be merged with late_pf MSHR block
   val mergeAMask = VecInit(io.mshrInfo.map(s =>
     s.valid && s.bits.isPrefetch && sameAddr(in, s.bits) && !s.bits.willFree && !s.bits.dirHit && !s.bits.s_refill &&
-      in.fromA && (in.opcode === AcquireBlock || in.opcode === AcquirePerm) && !s.bits.mergeA && !(in.param === NtoT && s.bits.param === NtoB)
+      in.fromA && (in.opcode === AcquireBlock || in.opcode === AcquirePerm) &&
+      !s.bits.mergeA && !(in.param === NtoT && s.bits.param === NtoB)
   )).asUInt
   val mergeA = mergeAMask.orR
   val mergeAId = OHToUInt(mergeAMask)
@@ -177,7 +179,6 @@ class RequestBuffer(flow: Boolean = true, entries: Int = 4)(implicit p: Paramete
     case(in, e) =>
       // when io.out.valid, we temporarily stall all entries of the same set
       val pipeBlockOut = io.out.valid && sameSet(e.task, io.out.bits)
-
       in.valid := e.valid && e.rdy && !pipeBlockOut
       in.bits  := e
   }

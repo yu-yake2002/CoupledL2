@@ -36,6 +36,11 @@ class MetaEntry(implicit p: Parameters) extends L2Bundle {
   val prefetchSrc = if (hasPrefetchSrc) Some(UInt(PfSource.pfSourceBits.W)) else None // prefetch source
   val accessed = Bool()
 
+  val blockType = if (enableUnifiedCache) Some (UInt(blockTypeBits.W)) else None
+
+  def CacheBlockType: UInt = 0.U(blockTypeBits.W)
+  def FtbBlockType:   UInt = 1.U(blockTypeBits.W)
+
   def =/=(entry: MetaEntry): Bool = {
     this.asUInt =/= entry.asUInt
   }
@@ -47,7 +52,7 @@ object MetaEntry {
     init
   }
   def apply(dirty: Bool, state: UInt, clients: UInt, alias: Option[UInt], prefetch: Bool = false.B,
-            pfsrc: UInt = PfSource.NoWhere.id.U, accessed: Bool = false.B
+            pfsrc: UInt = PfSource.NoWhere.id.U, accessed: Bool = false.B, blockType: UInt = 0.U
   )(implicit p: Parameters) = {
     val entry = Wire(new MetaEntry)
     entry.dirty := dirty
@@ -57,6 +62,7 @@ object MetaEntry {
     entry.prefetch.foreach(_ := prefetch)
     entry.prefetchSrc.foreach(_ := pfsrc)
     entry.accessed := accessed
+    entry.blockType.foreach(_ := blockType)
     entry
   }
 }
@@ -64,6 +70,7 @@ object MetaEntry {
 class DirRead(implicit p: Parameters) extends L2Bundle {
   val tag = UInt(tagBits.W)
   val set = UInt(setBits.W)
+  val blockType = if (enableUnifiedCache) Some(UInt(blockTypeBits.W)) else None
   // dirResult.way must only be in the wayMask
   val wayMask = UInt(cacheParams.ways.W)
   val replacerInfo = new ReplacerInfo()
@@ -180,7 +187,12 @@ class Directory(implicit p: Parameters) extends L2Module {
 
   val tagMatchVec = tagAll_s3.map(_ (tagBits - 1, 0) === req_s3.tag)
   val metaValidVec = metaAll_s3.map(_.state =/= MetaData.INVALID)
-  val hitVec = tagMatchVec.zip(metaValidVec).map(x => x._1 && x._2)
+  // Compare block type
+  val metaTypeMatch = metaAll_s3.map(_.blockType match {
+    case Some(t) => t === req_s3.blockType.get
+    case None => true.B
+  })
+  val hitVec = tagMatchVec.zip(metaValidVec).zip(metaTypeMatch).map(x => x._1._1 && x._1._2 && x._2)
 
   /* ====== refill retry ====== */
   // when refill, ways that have not finished writing its refillData back to DS (in MSHR Release),

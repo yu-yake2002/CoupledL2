@@ -97,6 +97,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
   val req_acquirePerm = req.opcode === AcquirePerm
   val req_get = req.opcode === Get
   val req_prefetch = req.opcode === Hint
+  val req_release = (req.opcode === Release || req.opcode === ReleaseData) && req.fromC
 
   val promoteT_normal =  dirResult.hit && meta_no_client && meta.state === TIP
   val promoteT_L3     = !dirResult.hit && gotT
@@ -160,7 +161,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
   }
   val mp_release, mp_probeack, mp_grant = Wire(new TaskBundle)
   val mp_release_task = {
-    mp_release.channel := req.channel
+    mp_release.channel := Mux(req.fromC, 1.U, req.channel)
     mp_release.tag := dirResult.tag
     mp_release.set := req.set
     mp_release.off := 0.U
@@ -202,6 +203,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
     mp_release.reqSource := 0.U(MemReqSource.reqSourceBits.W)
     mp_release.mergeA := false.B
     mp_release.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
+    mp_release.denied.foreach(_ := false.B)
     mp_release
   }
 
@@ -252,7 +254,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
       clients = Fill(clientBits, !probeGotN),
       alias = meta.alias, //[Alias] Keep alias bits unchanged
       prefetch = req.param =/= toN && meta_pft,
-      accessed = req.param =/= toN && meta.accessed
+      accessed = req.param =/= toN && meta.accessed // TODO: BlockType?
     )
     mp_probeack.metaWen := true.B
     mp_probeack.tagWen := false.B
@@ -262,6 +264,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
     mp_probeack.replTask := false.B
     mp_probeack.mergeA := false.B
     mp_probeack.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
+    mp_probeack.denied.foreach(_ := false.B)
     mp_probeack
   }
 
@@ -279,7 +282,11 @@ class MSHR(implicit p: Parameters) extends L2Module {
     mp_grant.sourceId := req.sourceId
     mp_grant.alias.foreach(_ := 0.U)
     mp_grant.vaddr.foreach(_ := 0.U)
-    mp_grant.opcode := odOpGen(req.opcode)
+    if (enableUnifiedCache) {
+      mp_grant.opcode := Mux(req.fromC, ReleaseAck, odOpGen(req.opcode))
+    } else {
+      mp_grant.opcode := odOpGen(req.opcode)
+    }
     mp_grant.param := Mux(
       req_get || req_prefetch,
       0.U, // Get -> AccessAckData
@@ -316,7 +323,23 @@ class MSHR(implicit p: Parameters) extends L2Module {
 
     mp_grant.meta := MetaEntry(
       dirty = gotDirty || dirResult.hit && (meta.dirty || probeDirty),
-      state = Mux(
+      state = if (enableUnifiedCache) {
+        val index_vec = Cat(req_get, req_acquire, req_release)
+        val state_vec = VecInit(Seq(
+          Mux( // Get
+            dirResult.hit,
+            Mux(isT(meta.state), TIP, BRANCH),
+            Mux(req_promoteT, TIP, BRANCH)
+          ),
+          Mux( // Acquire
+            req_promoteT || req_needT,
+            Mux(req_prefetch, TIP, TRUNK),
+            BRANCH
+          ),
+          TIP
+        ))
+        Mux1H(index_vec, state_vec)
+      } else Mux(
         req_get,
         Mux( // Get
           dirResult.hit,
@@ -329,7 +352,11 @@ class MSHR(implicit p: Parameters) extends L2Module {
           BRANCH
         )
       ),
-      clients = Mux(
+      clients = if (enableUnifiedCache) Mux(
+        req_prefetch,
+        Mux(dirResult.hit, meta.clients, Fill(clientBits, false.B)),
+        Fill(clientBits, !((req_get || req_release) && (!dirResult.hit || meta_no_client || probeGotN)))
+      ) else Mux(
         req_prefetch,
         Mux(dirResult.hit, meta.clients, Fill(clientBits, false.B)),
         Fill(clientBits, !(req_get && (!dirResult.hit || meta_no_client || probeGotN)))
@@ -337,11 +364,16 @@ class MSHR(implicit p: Parameters) extends L2Module {
       alias = Some(aliasFinal),
       prefetch = req_prefetch || dirResult.hit && meta_pft,
       pfsrc = PfSource.fromMemReqSource(req.reqSource),
-      accessed = req_acquire || req_get
+      accessed = req_acquire || req_get,
+      blockType = req.blockType match {
+        case Some(t) => t
+        case None => 0.U
+      }
     )
     mp_grant.metaWen := true.B
     mp_grant.tagWen := !dirResult.hit
-    mp_grant.dsWen := (!dirResult.hit || gotDirty) && gotGrantData || probeDirty && (req_get || req.aliasTask.getOrElse(false.B))
+    mp_grant.dsWen := (!dirResult.hit || gotDirty) && gotGrantData ||
+      probeDirty && (req_get || req.aliasTask.getOrElse(false.B)) || req.fromC
     mp_grant.fromL2pft.foreach(_ := req.fromL2pft.get)
     mp_grant.needHint.foreach(_ := false.B)
     mp_grant.replTask := !dirResult.hit // Get and Alias are hit that does not need replacement
@@ -379,6 +411,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
       prefetch = false.B,
       accessed = true.B
     )
+    mp_grant.denied.foreach(_ := false.B)
 
     mp_grant
   }
@@ -481,15 +514,29 @@ class MSHR(implicit p: Parameters) extends L2Module {
     // 2. the same way, just release as normal (only now we set s_release)
     // 3. differet way, we need to update meta and release that way
     // if meta has client, rprobe client
-    when (replResp.meta.state =/= INVALID) {
-      // set release flags
-      state.s_release := false.B
-      state.w_releaseack := false.B
-      // rprobe clients if any
-      when(replResp.meta.clients.orR) {
-        state.s_rprobe := false.B
-        state.w_rprobeackfirst := false.B
-        state.w_rprobeacklast := false.B
+    if (enableUnifiedCache) {
+      when(replResp.meta.state =/= INVALID && replResp.meta.blockType.get === MetaEntry().CacheBlockType) {
+        // set release flags
+        state.s_release := false.B
+        state.w_releaseack := false.B
+        // rprobe clients if any
+        when(replResp.meta.clients.orR) {
+          state.s_rprobe := false.B
+          state.w_rprobeackfirst := false.B
+          state.w_rprobeacklast := false.B
+        }
+      }
+    } else {
+      when(replResp.meta.state =/= INVALID) {
+        // set release flags
+        state.s_release := false.B
+        state.w_releaseack := false.B
+        // rprobe clients if any
+        when(replResp.meta.clients.orR) {
+          state.s_rprobe := false.B
+          state.w_rprobeackfirst := false.B
+          state.w_rprobeacklast := false.B
+        }
       }
     }
   }

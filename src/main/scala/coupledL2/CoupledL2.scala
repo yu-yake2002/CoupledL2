@@ -71,7 +71,7 @@ trait HasCoupledL2Parameters {
   lazy val edgeOut = p(EdgeOutKey)
   lazy val bankBits = p(BankBitsKey)
 
-  lazy val clientBits = edgeIn.client.clients.count(_.supports.probe)
+  lazy val clientBits = if (enableUnifiedCache) 1 else edgeIn.client.clients.count(_.supports.probe)
   lazy val sourceIdBits = edgeIn.bundle.sourceBits // ids of L1
   lazy val msgSizeBits = edgeIn.bundle.sizeBits
   lazy val sourceIdAll = 1 << sourceIdBits
@@ -94,6 +94,9 @@ trait HasCoupledL2Parameters {
   lazy val tagBits = fullTagBits - bankBits
 
   lazy val outerSinkBits = edgeOut.bundle.sinkBits
+
+  val enableUnifiedCache = cacheParams.enableUnifiedFtb
+  val blockTypeBits: Int = 1
 
   def getClientBitOH(sourceId: UInt): UInt = {
     if (clientBits == 0) {
@@ -389,7 +392,7 @@ class CoupledL2(implicit p: Parameters) extends LazyModule with HasCoupledL2Para
 
         slice
     }
-    val l1Hint_arb = Module(new Arbiter(new L2ToL1Hint(), slices.size))
+    lazy val l1Hint_arb = Module(new Arbiter(new L2ToL1Hint(), slices.size))
     val slices_l1Hint = slices.zipWithIndex.map {
       case (s, i) => Pipeline(s.io.l1Hint, depth = 1, pipe = false, name = Some(s"l1Hint_buffer_$i"))
     }

@@ -81,14 +81,17 @@ class GrantBuffer(implicit p: Parameters) extends L2Module {
   })
 
   // =========== functions ===========
-  def toTLBundleD(task: TaskBundle, data: UInt = 0.U, grant_id: UInt = 0.U) = {
+  def toTLBundleD(task: TaskBundle, data: UInt = 0.U, grant_id: UInt = 0.U): TLBundleD = {
     val d = Wire(new TLBundleD(edgeIn.bundle))
     d.opcode := task.opcode
     d.param := task.param
     d.size := offsetBits.U
     d.source := task.sourceId
     d.sink := grant_id
-    d.denied := false.B
+    d.denied := (task.denied match {
+      case Some(t) => t
+      case None => false.B
+    })
     d.data := data
     d.corrupt := false.B
     d
@@ -143,6 +146,7 @@ class GrantBuffer(implicit p: Parameters) extends L2Module {
   mergeAtask.reqSource := io.d_task.bits.task.reqSource
   mergeAtask.mergeA := false.B
   mergeAtask.aMergeTask := 0.U.asTypeOf(new MergeTaskBundle)
+  mergeAtask.denied.foreach(_ := false.B)
   val inflight_insertIdx = PriorityEncoder(inflightGrant.map(!_.valid))
 
   // The following is organized in the order of data flow
