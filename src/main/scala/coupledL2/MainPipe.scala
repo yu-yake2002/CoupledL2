@@ -214,7 +214,10 @@ class MainPipe(implicit p: Parameters) extends L2Module {
   val need_mshr_s3_b = dirResult_s3.hit && req_s3.fromB &&
     !((meta_s3.state === BRANCH || meta_s3.state === TIP) && req_s3.param === toB) &&
     meta_has_clients_s3
-  val need_mshr_s3_c = sinkC_req_s3 && !dirResult_s3.hit
+  val need_mshr_s3_c = sinkC_req_s3 && !dirResult_s3.hit && (req_s3.isFtbBlock match {
+    case Some(t) => t
+    case None => false.B
+  })
 
   // For channel C reqs, Release will always hit on MainPipe, no need for MSHR
   val need_mshr_s3 = if (enableUnifiedCache) {
