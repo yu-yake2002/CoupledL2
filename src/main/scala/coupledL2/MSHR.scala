@@ -324,7 +324,7 @@ class MSHR(implicit p: Parameters) extends L2Module {
     mp_grant.meta := MetaEntry(
       dirty = gotDirty || dirResult.hit && (meta.dirty || probeDirty),
       state = if (enableUnifiedCache) {
-        val index_vec = Cat(req_get, req_acquire, req_release)
+        val index_vec = Cat(req_get, req_acquire || req_prefetch, req_release)
         val state_vec = VecInit(Seq(
           Mux( // Get
             dirResult.hit,

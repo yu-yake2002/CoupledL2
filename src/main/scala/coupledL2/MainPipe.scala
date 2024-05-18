@@ -479,6 +479,7 @@ class MainPipe(implicit p: Parameters) extends L2Module {
   when (ftb_get_miss_s3) {
     d_s3.bits.task.denied.foreach(_ := true.B)
   }
+  dontTouch(d_s3)
 
   /* ======== nested & prefetch ======== */
   io.nestedwb.set := req_s3.set
@@ -522,6 +523,7 @@ class MainPipe(implicit p: Parameters) extends L2Module {
   when (task_s3.valid && !req_drop_s3) {
     task_s4.bits := source_req_s3
     task_s4.bits.mshrId := Mux(!task_s3.bits.mshrTask && need_mshr_s3, io.fromMSHRCtl.mshr_alloc_ptr, source_req_s3.mshrId)
+    task_s4.bits.denied.foreach(_ := Mux(ftb_get_miss_s3, true.B, source_req_s3.denied.get))
     data_unready_s4 := data_unready_s3
     data_s4 := data_s3
     ren_s4 := ren
